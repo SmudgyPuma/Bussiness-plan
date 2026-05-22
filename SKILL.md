@@ -1,266 +1,215 @@
 ---
-name: argumentation-answer-style
-description: Style and content rules for answering Argumentation Analysis and Reasoning assignments. Apply whenever the user asks for help with exercises about standpoints, arguments, bridging premises, argumentation types, argumentation structures, or critical questions in this course. Follow the model-answer conventions in this file rather than improvising format.
-course: Argumentation Analysis and Reasoning (TU Delft)
-purpose: Match the answer style used in the official model-answer documents.
+name: smart-wheelchair-bap
+description: Context and engineering reference for a Bachelor End Project (BAP) building an autonomous smart wheelchair demo for a university open day. The demo targets high school visitors and the general public, running in a pre-mapped indoor space. The primary user input modality is Voice Control (Acoustic Keyword Spotting) with touchscreen/tactile fallbacks. Use this skill whenever the user discusses the BAP, the voice control subsystem, noise reduction strategies, the offline Vosk engine, integration with the pathfinding team, ROS2 bridge, the GUI, or the touchscreen/button fallbacks.
 ---
 
-# How to answer Argumentation assignments
+# Smart Wheelchair BAP — Voice Control & User Input Subsystem
 
-This file captures the patterns observed in the official model answers. Use it as the reference whenever someone in this project asks for help with an argumentation exercise.
+This skill captures the full engineering context for a Bachelor End Project focused on upgrading a smart wheelchair to autonomous destination-based navigation. The user owns the **User Input Subsystem** (Voice Control + Fallbacks) of a larger team project.
 
-## Tone and writing
+The target audience is high school students and the general public visiting a university open day. The system must be robust to noisy environments, easy to set up, hygienic, and scalable so that it can be further trained or upgraded in the future.
 
-- No dashes (no "--") and no semicolons. Use commas, full stops, or "and".
-- Keep answers compact. The model answers are dense and to the point.
-- Sound like a careful student, not a textbook. No filler sentences.
-- When asked "explain briefly," one sentence is usually enough.
+When this skill is active, assume the user is the student engineer and respond with the specificity of someone who has read the project reports and design decisions. The user is located in Delft, NL. Prices are in euros. The user codes in Cursor.
 
-## Standpoints
+---
 
-### How to write them
+## 1. Project Goal
 
-Make them short, direct, and in active voice. A standpoint should fit on a sticker.
+### 1.1 Technical Goal
+Upgrade the wheelchair to **autonomous pathfinding**, where the user speaks a destination keyword, the system confirms intent, and the chair drives itself there autonomously.
 
-Examples from the model:
-- "Buy Oatly." (not "You should drink Oatly instead of cow's milk because it is better for human consumption")
-- "Don't just throw plastic away." (not "We should stop polluting the ocean with plastic")
-- "The railway should not have to make a profit."
-- "Barbie is a brilliant movie."
-- "Political correctness is now rightly ridiculed."
+### 1.2 Demo Context
+The project must produce a **university open day demo** in a pre-mapped, known indoor space.
+- **User-Directed Mode**: A visitor sits in the chair, clips on a microphone, and speaks a destination. The chair drives there autonomously.
+- **Constraints**: Must work reliably in a crowded, noisy environment (cocktail party effect) for naive users with zero prior training. Setup time per visitor must be ≤ 3 minutes.
+- **Future-Proofing**: The architecture must be modular so that it can be further trained with new machine learning acoustic models, or upgraded to advanced LLM intent-parsing in the future without rebuilding the core integration.
 
-### Test for stripping it down
+### 1.3 Selected Input System
+The student is responsible for the User Input Subsystem, which consists of:
+1. **Primary Interface:** Voice Control (Acoustic Keyword Spotting) using offline Vosk ASR, wake-word gated, with Groq LLM intent classification.
+2. **Deterministic Fallback:** Mouse/Cursor click on a digital map displayed on the host laptop screen. **(GUI map overlay is built; click-to-navigate is not yet wired up — see Section 6.)**
+3. **Ultimate Safety Override:** Emergency Stop button on the GUI + physical keyboard.
+
+Mode switching is handled by a Mode Arbiter to ensure mutual exclusion before passing commands to the pathfinding team.
+
+---
+
+## 2. Hardware Stack
+
+### 2.1 Voice Hardware — **DECIDED**
+The Plantronics Voyager 5200 UC headset with the BT300M USB Bluetooth adapter has been selected.
 
-Cut every word that isn't load-bearing. If you can take a word out and the meaning still holds, take it out.
+| Component | Chosen Part | Role |
+|---|---|---|
+| **Wireless Transmitter/Receiver** | Plantronics BT300M USB adapter | Plug-and-play, bypasses unstable Bluetooth stacks. Appears as device index 24 on WASAPI (Windows). |
+| **Directional Microphone** | Plantronics Voyager 5200 UC | 6-microphone array with hardware Acoustic Fence DSP — physically rejects off-axis crowd noise. |
+
+The software noise gate (`NoiseGate` class in `voice_control.py`) is present but disabled by default because the Plantronics hardware DSP already does a better job. Only enable the gate if you switch to a plain omnidirectional mic.
+
+*WASAPI is used as the audio API (lowest latency on Windows). Device index 24 is hardcoded in `VoiceConfig.input_device`.*
+
+### 2.2 Fallback & Integration Hardware
+| Component | Role |
+|---|---|
+| Laptop Mouse/Cursor | Visual map selection if voice fails (click-to-navigate not yet implemented) |
+| GUI E-Stop Button | Emergency stop with toggle (release) — wired to ROS2 |
+| Laptop Keyboard | F11 for fullscreen, ESC to exit or dismiss map |
+| Cables & Mounts | USB hubs, cable management, mounting brackets |
 
-### Implicit standpoints
+---
+
+## 3. Code Architecture & Files
+
+All source files live in the project root (`C:\BAP V2\`).
+
+### 3.1 File Map
+
+| File | Status | Purpose |
+|---|---|---|
+| `main.py` | Done | Entry point — wires GUI + Voice + ROS2 together |
+| `voice_control.py` | Done | Full voice pipeline (Vosk, wake gate, FastNavigator, LLM, TTS, noise gate, gender detection) |
+| `jarvis_gui.py` | Done | PyQt6 full-screen Jarvis GUI |
+| `ros2_bridge.py` | Done | ROS2 integration (native rclpy + rosbridge WebSocket) |
+| `gender_detector.py` | Done | Pitch-based F0 autocorrelation gender classifier |
+| `requirements.txt` | Done | Python dependencies |
+| `models/vosk-model-en-us-0.22/` | Done | Vosk ASR model, downloaded and in place |
+| `assets/eemcs_map.png` | Done | EEMCS walking-routes map for the GUI overlay |
+| `green_light_assessment.tex` | Done | Green light milestone report |
+| `.env` | Done | Holds `GROQ_API_KEY=gsk_...` |
+| `Jarvis-Windows/` | Archive | Earlier prototype using Whisper STT + Kokoro TTS. Not used in the current system. |
 
-For ads and images, the standpoint is almost always implicit. Ask "what does this want me to do or believe?" The answer is usually a prescriptive command. Write it as "Buy X" or "Do not Y" rather than describing what the ad implies.
+### 3.2 Keyword Spotting (KWS) Pipeline
 
-When the standpoint is implicit, mention this and put it between brackets in the argumentation structure.
+1. Audio captured from Plantronics BT300M (device 24, WASAPI) via `sounddevice.RawInputStream`, 16 kHz, 125 ms chunks.
+2. Optional software `NoiseGate` filters chunks below an RMS energy threshold (disabled by default — see Section 2.1).
+3. Every chunk is fed in parallel to `GenderDetector` (pitch analysis) to update the sir/madame address.
+4. Chunks are fed to `VoskEngine` (offline, `vosk-model-en-us-0.22`). Partial results are displayed in the GUI in real time.
+5. Final results are filtered against `_STT_NOISE_WORDS` (single common words like "the", "a") and a per-word confidence gate (`_STT_MIN_CONF = 0.45`).
+6. `WakeWordGate` checks for "Jarvis". Once awake, the gate stays open for 30 seconds per utterance, refreshed on each new command.
+7. On wake, if there is no trailing command in the same utterance, Jarvis says "Yes, sir?" and waits. If there is a trailing command it is processed immediately.
+8. Every command goes to `FastNavigator` first (zero-LLM path): if it matches a motion verb + known destination, the chair is asked for confirmation and moves. No Groq call needed.
+9. If `FastNavigator` does not match, the command goes to `IntentClassifier` (Groq `llama-3.1-8b-instant`, ~200 ms round trip) which classifies into one of six intents: `navigate`, `show_map`, `hide_map`, `question`, `chatter`, `goodbye`.
+10. For `navigate`, `VoiceController._voice_confirm()` asks "Shall I take you to X, sir?" and listens for a spoken yes/no (8 s timeout, safe default: cancel).
+11. On confirmation, `PayloadEmitter` builds the JSON payload and fires it via `VoiceObserver.on_navigate()` → `QtVoiceObserver` Qt signal → `ros2.publish_nav_goal()`.
 
-## Standpoint types
+### 3.3 Interface to Pathfinding Team — **DECIDED**
 
-Three options. The course uses these terms.
+Communication is over ROS2. Two transport options are available via `create_bridge()` in `ros2_bridge.py`:
 
-### Descriptive (or factual)
-Describes a state of affairs in reality that can be checked with factual information.
-- Signal: claim about what is, was, or will be the case.
-- Example explanation: "Descriptive standpoint, it describes a certain state of affairs in reality that can be checked with factual information."
+| Transport | When to use |
+|---|---|
+| `Ros2NativeNode` | GUI and robot on the same machine (development) |
+| `Ros2WebsocketBridge` | GUI laptop and wheelchair PC are separate (demo, connects over Wi-Fi to rosbridge port 9090) |
 
-### Evaluative (or normative)
-Conveys the speaker's evaluation or judgement about something.
-- Signal words: "rightly," "wrongly," "good," "bad," "brilliant," "beautiful," "wrong."
-- Example explanation: "Evaluative standpoint, it conveys the writer's evaluation of the movie."
-- The terms "evaluative" and "normative" are interchangeable in this course. Pick one and stick with it.
+Set `ROS2_TRANSPORT=native` or `ROS2_TRANSPORT=websocket` in the environment before launching. The WebSocket bridge auto-reconnects on drop.
 
-### Prescriptive
-Contains a proposal for a course of action that should (or should not) be taken.
-- Signal words: "should," "must," "buy," "do," "stop," imperative verbs.
-- Example explanation: "Prescriptive standpoint, it contains a proposal for a course of action (buying Oatly) that should be taken."
+**ROS2 Topics**
 
-### Common trap
+| Direction | Topic | Type | Content |
+|---|---|---|---|
+| Publish | `/wheelchair/nav_goal` | `std_msgs/String` | JSON nav goal payload |
+| Publish | `/wheelchair/estop` | `std_msgs/Bool` | True = stop, False = release |
+| Subscribe | `/wheelchair/status` | `std_msgs/String` | JSON status from pathfinding team |
 
-Ads usually look evaluative ("Oatly is better than milk") but the underlying standpoint is prescriptive ("Buy Oatly"). Default to prescriptive for advertisements.
+**Navigation goal payload**
+```json
+{
+  "mode":        "voice",
+  "destination_id": "LOC_LAB_A",
+  "destination_phrase": "lab a",
+  "confidence":  0.980,
+  "confirmed":   true,
+  "timestamp":   1716200000.0
+}
+```
 
-## Arguments
+**Status payload (from pathfinding team)**
+```json
+{
+  "state":       "NAVIGATING",
+  "destination": "lab_a",
+  "progress":    0.42,
+  "message":     ""
+}
+```
+States are `IDLE`, `NAVIGATING`, `ARRIVED`, `OBSTACLE`, `ESTOP`, `ERROR`. The GUI shows them colour-coded below the voice state label.
 
-### How to list them
+---
 
-Use bullet points or a numbered list. One short statement per argument. Strip elaboration. Match the wording of the text where possible.
+## 4. Subsystem Requirements (from PoR)
 
-Example (Barbie):
-- The script was hilarious and inspirational.
-- The actors did an amazing job.
-- My daughter loved it and came away with the right message.
+- **REQ-UI-FR01**: Robustly interpret user intent and map to a predefined spatial destination.
+- **REQ-UI-FR03**: Setup/calibration ≤ 3.0 minutes per naive user. (Clipping on the mic takes < 30 seconds).
+- **REQ-UI-FR04**: Deterministic Mode Arbiter to prevent simultaneous inputs (e.g., clicking the map while speaking).
+- **REQ-UI-FR05**: Provide immediate unambiguous feedback with a 2-second window to cancel the action. *(Implemented as a spoken voice-confirmation loop, not a countdown timer — more natural for naive users.)*
+- **REQ-UI-FR06**: Completely local/offline operation (absolute data privacy, no cloud APIs). *(Vosk, GenderDetector, and GUI are offline. Groq is cloud but optional — Ollama local model is supported as a drop-in by setting `llm_provider="ollama"`.)*
+- **REQ-UI-TR02**: End-to-end processing latency ≤ 1.0 seconds. *(FastNavigator path is ~0 ms + TTS. LLM path is ~200–500 ms Groq round trip.)*
+- **REQ-UI-TR03**: Intent recognition accuracy ≥ 95% in standard indoor demonstration noise.
 
-### Finding them
+---
 
-Anything offered as a reason to accept the standpoint is an argument. Look for "because," "since," cause-and-effect signals, and supporting evidence.
+## 5. GUI — Jarvis Console
 
-### Do not merge separate arguments
+`jarvis_gui.py` is a PyQt6 full-screen GUI themed after the Iron Man / Cortana orb aesthetic. It is I/O-free: all state is driven via Qt signals from the voice subsystem running in a daemon thread.
 
-If the text offers two distinct reasons (even if they touch the same general topic), list them as two separate arguments. For example, "the climate is ideal for growing pecans" and "pecan trees remove CO2 from the air" are two separate arguments about pecans, not one argument about "environmental benefits". Treat each as its own bullet.
+Key elements:
+- **JarvisOrb** — animated glowing ring with rotating arcs. Speed and brightness react to `State` (IDLE / LISTENING / AWAITING COMMAND / THINKING / SPEAKING).
+- **AddressChip** — top-right chip showing "SIR" (blue) or "MADAME" (pink), updated in real time by the gender detector.
+- **Ros2StatusChip** — top-right connection indicator (green = LIVE, red = OFFLINE).
+- **Robot state label** — coloured text below the voice state label showing NAVIGATING / ARRIVED / OBSTACLE / ESTOP / ERROR from the pathfinding team.
+- **Live transcript** — partial (live) and final (confirmed) Vosk output shown in the centre.
+- **Reply label** — Jarvis's spoken replies also shown on screen.
+- **MapOverlay** — fade-in full-screen panel displaying `assets/eemcs_map.png`. Triggered by voice ("show me the map") or dismissed by voice ("close the map") or ESC key.
+- **Emergency Stop button** — large red button at the bottom. Toggles between EMERGENCY STOP (activate) and RELEASE E-STOP, publishing to `/wheelchair/estop`.
 
-### Weak arguments go in brackets
+Run `python jarvis_gui.py` directly to preview the GUI with a scripted demo loop (no mic required).
 
-When listing main arguments, put weak arguments in brackets to mark them as weak. They still count as arguments because the writer offers them as reasons, but the brackets show the reader you noticed they are weak. The model uses a one-line note underneath: "The arguments between brackets are weak arguments (at best), but they are presented as arguments nonetheless."
+---
 
-### Do not include framing or conclusions as arguments
+## 6. What Is Not Yet Built
 
-Closing remarks like "Politics plays a huge part" or "Get the facts" function as framing or rhetorical wrap-up, not as actual reasons supporting the standpoint. Do not list them as arguments unless the writer is genuinely offering them as a reason.
+The following items are identified but not yet implemented:
 
-## Bridging premises
+**Map click-to-navigate** — `MapOverlay` displays the EEMCS map and fades in/out correctly. Clicking a room on the map is *not yet wired* to send a navigation command. The `map_dismissed` signal from `MapOverlay` fires but no click handler on the map image converts pixel coordinates to a destination ID. This is the main remaining piece of the fallback input subsystem.
 
-Write them in the explicit "If X, then Y" conditional form when possible.
+**Grammar-locked Vosk** — `VoiceConfig.grammar_locked` exists and passes a constrained word list to `KaldiRecognizer`. It is off by default because the full model handles natural speech better for the LLM question/chatter paths. May be worth testing for the FastNavigator-only mode.
 
-Example: "If a highway and a bike path do not make a profit, a railway should not have to make a profit either."
+**Ollama offline LLM** — code is fully in place (`_init_ollama`, `_call_ollama`). Set `llm_provider="ollama"` and `ollama_model="llama3.2:3b"` in `VoiceConfig` to run fully offline. Not tested end-to-end against the demo script yet.
 
-Or use the signature phrase of the argumentation type:
-- Sign: "That X signifies that Y."
-- Causal: "That X causes Y."
-- Analogy: "X and Y are similar, so what holds for one holds for the other."
-- Example: "X is a typical instance of Y."
-- Authority: "Source S endorses Y, so Y is true."
+---
 
-The bridging premise should make the hidden assumption explicit.
+## 7. Running the System
 
-## Argumentation types
+```
+# Install dependencies (once):
+pip install -r requirements.txt
 
-Always check which signature phrase fits the bridging premise. The signature phrase decides the type.
+# Add Groq key to .env:
+echo GROQ_API_KEY=gsk_... > .env
 
-### Argument from sign
-"X signifies Y" or "X is a sign of Y."
-- Used when evidence indicates or points to a conclusion without a clear cause-effect mechanism.
-- Very common for evaluative standpoints (e.g., "the script was funny signifies the movie is brilliant").
-- Common trap: do not confuse with causal. If you can replace "signifies" with "causes" and lose meaning, it is sign.
+# Native ROS2 (same machine as robot, ROS2 Jazzy sourced):
+source /opt/ros/jazzy/setup.bash
+python main.py
 
-### Causal argumentation
-"X causes Y" or "X leads to Y."
-- Used when there is a real cause-effect chain.
-- In the political correctness example, "silencing debates causes the inability to tackle problems" is causal.
+# WebSocket (robot on a separate PC at 192.168.1.100):
+set ROSBRIDGE_HOST=192.168.1.100
+set ROS2_TRANSPORT=websocket
+python main.py
 
-### Pragmatic argumentation
-"Y should (not) be done because of its consequences."
-- Almost always paired with a prescriptive standpoint.
-- Whenever the argument is "this leads to bad things, so don't do it" or "this leads to good things, so do it," it is pragmatic.
-- Example (plastic ad): "Don't throw plastic away, because what goes in the ocean goes in you."
+# GUI preview only (no mic, no ROS2):
+python jarvis_gui.py
 
-### Argument from analogy
-"X is similar to Y, so what holds for Y also holds for X."
-- Look for comparisons of two situations or cases.
-- Example (bike paths): "Railways are like highways and bike paths, so they should be treated the same."
+# Voice only (CLI, no GUI):
+python voice_control.py
+```
 
-### Argument from example
-"X is a specific instance of the general claim Y."
-- Look for a specific named case used to support a broader claim.
-- Example (Barbie): "Ryan Gosling as Ken was a good choice" supports the broader claim "the actors did an amazing job."
+Press F11 for fullscreen, ESC to dismiss the map or quit.
 
-### Argument from authority
-"Source S endorses Y, so Y is true / acceptable."
-- Look for references to a person, group, or witness whose view is treated as carrying weight.
-- Example (Barbie): "My daughter loved it" cited as evidence of the movie's quality.
+---
 
-### Rule of thumb when classifying
-
-Write the bridging premise out in full. The verb you use (signifies, causes, leads to, is like, is an instance of, says so) tells you the type.
-
-### Standpoint wording changes the type
-
-The same argument can be a different type depending on how the standpoint is phrased. If the (sub-)standpoint is prescriptive ("we should rejoice", "we should plant more"), the supporting reason about positive consequences is pragmatic. If the same reason is reframed under a descriptive or evaluative standpoint ("growing pecans is beneficial for the climate"), the same supporting reason becomes an argument from sign. When in doubt, write the standpoint exactly as the text phrases it, then choose the type that fits that phrasing.
-
-## Argumentation structure
-
-### General principles
-
-- Standpoint goes at the top.
-- Arguments point upward with arrows toward the standpoint.
-- Sub-arguments sit below the arguments they support.
-- Implicit standpoints and arguments go in brackets.
-
-### Dependent vs independent
-
-- Dependent: arguments need each other. Remove one and the case collapses. Often used when arguments work together to show a contrast or fill in a chain of reasoning. Drawn with a horizontal line joining them before a single arrow up.
-- Independent: each argument stands alone. Remove one and the others still hold. Drawn as separate arrows up to the standpoint.
-
-### Explanation language for dependent arguments
-
-The model uses phrases like:
-- "They need each other to defend the standpoint."
-- "They show a contrast and that contrast justifies the claim."
-- "They need each other to make sense. Just saying X is not enough."
-
-### When choice is ambiguous
-
-Note it. The model openly says things like "you could also reconstruct this as X, but we chose Y because Z." Examples of acceptable reasons:
-- They are presented together in the text.
-- They are clearly more related to each other than to the other arguments.
-- You can criticize each claim separately, so dependent works.
-
-## Critical questions
-
-### Three patterns to use
-
-1. Question the truth of a specific premise.
-   - "Is it true that political correctness silences and closes down debates?"
-2. Question the connection between premise and conclusion (justificatory force).
-   - "Even if it is true that political correctness silences debates, does that mean it restricts the ability of society to tackle serious problems?"
-3. Ask whether other reasons or factors are being ignored.
-   - "Are there other reasons why political correctness should not be ridiculed? Does it have positive effects?"
-
-### Rules
-
-- Make them specific to the text. Generic "is this true?" questions are too weak.
-- Reference the actual content of the argument in the question.
-- Two questions is the typical ask. Three is fine.
-
-## Implicit content
-
-When standpoints or arguments are implicit, especially in advertisements:
-- Identify them by asking "what does the ad assume I will fill in?"
-- Mark them in brackets in the argumentation structure.
-- Explain that they are implicit in the accompanying text.
-- Example note: "Only the argument 'What goes in the ocean goes in you' is made explicit. The other arguments are implicitly communicated through the image."
-
-## Fallacies
-
-### How to answer a fallacy question
-
-Model answers use this compact format: name the fallacy, give the line numbers, explain in one short sentence why it is fallacious in this specific text.
-
-Example from the model:
-"Hasty generalization (l. 6-9, but also 15): the author's farm is not necessarily representative of all pecan farms in New Mexico."
-
-Use "l." (lowercase) for line numbers. Ranges are fine. "L. 16 onwards" is acceptable when the fallacy spans a stretch of text.
-
-### The fallacies that show up most in this course
-
-- **Hasty generalization**: a conclusion drawn from one or very few examples that are unlikely to be representative.
-- **Straw man**: misrepresenting the opponent's position into something easier to attack. Pay attention when the writer paraphrases what the opponent "advocates" or "wants" because that is often where the distortion happens.
-- **Red herring**: introducing content that is off-topic but presented as if it supports the standpoint. If the text drifts into nutritional benefits, environmental side effects, or other tangents that do not touch the actual issue, suspect red herring.
-- **Ad hominem (and its variants)**:
-  - Direct ad hominem: attacking the person's character.
-  - Indirect ad hominem: accusing the opponent of having ulterior motives or biased interests (e.g. "Of course you say that, you are a pecan farmer"). This is the variant for "you would say that because of who you are."
-  - Tu quoque: pointing out the opponent does the same thing.
-- **Ad populum**: "many people think so, therefore it is true."
-- **Ad baculum**: threat instead of an argument.
-- **Ad misericordiam**: appeal to pity in place of evidence.
-- **Ad ignorantiam**: "no evidence against, so it must be true."
-- **False dilemma**: presenting only two options when more exist.
-- **Loaded question**: a question that presupposes something contested.
-- **Argumentation types gone wrong**: any of the six types used incorrectly (e.g. argument from authority with a biased or unqualified source, false analogy, post-hoc causal).
-
-### Spotting the most common ones in opinion pieces
-
-In a typical opinion column rebutting a report or policy, expect to find:
-- Straw man around the writer's restatement of the opponent's proposal.
-- Hasty generalization when the writer uses their own personal experience to draw a conclusion about a whole industry or group.
-- Red herring when the writer drifts into the merits of their own product, lifestyle, or values that do not address the actual claim being attacked.
-
-### Picking three fallacies
-
-When a question asks for three, prefer three that are clearly different in kind, not three flavors of the same thing. Straw man, hasty generalization and red herring is a strong, contrasting set.
-
-## Format conventions
-
-- Use bullet lists for arguments and critical questions.
-- Use plain sentences for standpoint, type, bridging premise, and argumentation-type explanations.
-- When drawing argumentation structures in text, use boxes and arrows in a clean diagram. Keep boxes brief.
-- Always briefly explain choices when asked (one sentence is enough).
-
-## Quick checklist before submitting an answer
-
-1. Is the standpoint as short as it can be?
-2. Did I name the type correctly using one of the three course terms?
-3. Did I list arguments as a numbered list or bullet points with short statements, with weak arguments marked in brackets?
-4. Did I avoid merging distinct arguments into one bullet, and avoid listing framing/conclusion sentences as arguments?
-5. Is the bridging premise written as a conditional or with the signature phrase of the type?
-6. Did I check whether the argumentation type is sign, causal, pragmatic, analogy, example, or authority by writing out the bridging premise?
-7. Did I match the argumentation type to the exact wording of the standpoint (a prescriptive sub-standpoint pulls pragmatic, a descriptive one pulls sign)?
-8. For structure, did I distinguish dependent from independent and explain why?
-9. Are critical questions specific to the text and at least one of: tenability, justificatory force, alternative reasons?
-10. For fallacies, did I name the fallacy, cite the line numbers with "l.", and explain in one sentence why it is fallacious in this text?
-11. Did I consider red herring whenever the writer drifts into tangents that do not touch the actual claim?
-12. Did I use "indirect ad hominem" for the "you would say that because of who you are" pattern?
-13. Are implicit elements marked with brackets?
-14. Did I avoid dashes and semicolons?
+## 8. Cursor Workflow for this Project
+The user codes in Cursor. Best practices when providing code:
+- Give complete, self-contained functions the user can paste directly.
+- Focus on modular, class-based Python architecture so the Voice module can be easily swapped or extended later (e.g., upgrading from Vosk to a local LLM in the future).
+- Ensure all serial/socket logic includes robust error handling and reconnect loops.
+- Match the docstring and comment style of the existing files (module-level triple-quote docstrings with dashed underlines, inline comments explaining *why* not *what*).
